@@ -16,6 +16,14 @@
 
  */
 
+static file_ops procinfo_ops={
+        .Open = NULL,
+        .Read = procinfo_read,
+        .Write = NULL,
+        .Close = procinfo_close
+};
+
+
 /* The process table */
 PCB PT[MAX_PROC];
 unsigned int process_count;
@@ -335,6 +343,59 @@ void sys_Exit(int exitval)
 
 Fid_t sys_OpenInfo()
 {
-	return NOFILE;
+  FCB* fcb;
+  Fid_t fid;
+
+  int reserved = FCB_reserve(1,&fid, &fcb);
+
+  if(reserved==0)	return NOFILE;
+
+  IPCB* iscb=(IPCB*) xmalloc(sizeof(IPCB));
+
+  iscb->PCBcursor = 0;
+  iscb->closed = 0;
+
+  fcb->streamobj = iscb;
+  fcb->streamfunc = &procinfo_ops;
+
+  return fid;
 }
 
+int procinfo_read(void* dev, char*buf,uint size){
+  IPCB* iscb = (IPCB*) dev;
+
+  while(iscb->PCBcursor < MAX_PROC){
+
+    if(PT[iscb->PCBcursor].pstate != FREE){
+      PCB* curpcb = get_pcb(iscb->PCBcursor);  //get current PCB
+      //get data
+      iscb->pinfo.main_task = curpcb->main_task;
+      iscb->pinfo.argl = curpcb->argl;
+      memcpy(iscb->pinfo.args,curpcb->args,iscb->pinfo.argl);
+      iscb->pinfo.pid = get_pid(curpcb);
+      iscb->pinfo.ppid = get_pid(curpcb->parent);
+      iscb->pinfo.thread_count = curpcb->thread_count;
+      iscb->pinfo.alive = 1;
+
+      if(curpcb->pstate == ZOMBIE) iscb->pinfo.alive = 0;
+
+      iscb->PCBcursor++; //go to next PCB
+
+      memcpy(buf,&iscb->pinfo,sizeof(procinfo)); //copy data to buffer from the CB
+
+      return sizeof(procinfo);
+    }
+  }
+}
+
+int procinfo_close(void* dev){
+
+  IPCB* iscb = (IPCB*) dev;
+
+  if(iscb->closed){
+    free(iscb);
+    return 0;
+  }else{
+    return -1;
+  }
+}
