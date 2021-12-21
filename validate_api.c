@@ -108,7 +108,6 @@ static void waitchild_error()
 	ASSERT(WaitChild(MAX_PROC, NULL)==NOPROC);
 	ASSERT(WaitChild(GetPid()+1, NULL)==NOPROC);
 }
-
 static int subprocess(int argl, void* args) 
 {
 	ASSERT(GetPid()!=1);
@@ -1673,10 +1672,16 @@ void connect_sockets(Fid_t sock1, Fid_t lsock, Fid_t* sock2, port_t port)
 		.sock1=sock1, .lsock=lsock, .sock2=sock2, .port=port
 	};
 
-	ASSERT(run_get_status(connect_sockets_connect_process, sizeof(A), &A)==0);
+	/* Spawn a child to connect sock1 to port (where lsock must be listening) */
+	Pid_t pid = Exec(connect_sockets_connect_process, sizeof(A), &A);
+	ASSERT(pid != NOPROC);
 
+	/* accept the child's connection here */
 	*sock2 = Accept(lsock);
 	ASSERT(*sock2 != NOFILE);
+
+	/* Clean up child */
+	ASSERT(WaitChild(pid, NULL)==pid);
 }
 
 
@@ -1851,6 +1856,16 @@ BOOT_TEST(test_accept_reusable,
 }
 
 
+/* Helper for test_accept_fails_on_exhausted_fid */
+static int accept_connection_assert_fail(int argl, void* args) 
+{
+	ASSERT(argl==sizeof(Fid_t));
+	Fid_t lsock = * (Fid_t*) args;
+	ASSERT(Accept(lsock)==NOFILE);
+	return 0;
+}
+
+
 BOOT_TEST(test_accept_fails_on_exhausted_fid,
 	"Test that Accept will fail if the fids of the process are exhausted."
 	)
@@ -1873,13 +1888,15 @@ BOOT_TEST(test_accept_fails_on_exhausted_fid,
 	/* Ok, we should be able to get another client */
 	Fid_t cli = Socket(NOPORT); ASSERT(cli!=NOFILE);
 
-	/* Now, if we try a connection we should fail! */
-	ASSERT(Accept(lsock)==NOFILE);
-	ASSERT(Connect(cli, 100, 1000)==-1);
+	/* Call accept on another process and verify it fails */
+	Pid_t pid = Exec(accept_connection_assert_fail, sizeof(lsock), &lsock);
+	ASSERT(pid!=NOPROC);
 
+	/* Now, if we try a connection we should fail! */
+	ASSERT(Connect(cli, 100, 1000)==-1);
+	ASSERT(WaitChild(pid, NULL)==pid);
 	return 0;
 }
-
 
 
 static int unblocking_accept_connection(int argl, void* args) 
@@ -1888,6 +1905,7 @@ static int unblocking_accept_connection(int argl, void* args)
 	ASSERT(Accept(lsock)==NOFILE);
 	return 0;
 }
+
 
 
 BOOT_TEST(test_accept_unblocks_on_close,
