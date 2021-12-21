@@ -66,6 +66,19 @@ typedef struct process_control_block {
 } PCB;
 
 
+//comments for IPCB
+typedef struct info_process_control_block{
+  
+  procinfo pinfo;
+  int PCBcursor;
+  int closed;
+  
+}IPCB;
+
+int procinfo_read(void* dev, char*buf,uint size);
+int procinfo_close(void* dev);
+
+
 /**
   @brief Initialize the process table.
 
